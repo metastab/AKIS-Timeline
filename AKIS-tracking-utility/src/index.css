@@ -127,12 +127,12 @@ input, select, textarea {
   padding: 8px 12px;
   font-size: 14px;
   outline: none;
-  box-shadow: inset 1px 1px 2px rgba(0, 0, 0, 0.08);
+  box-shadow: inset 1px 1px 0px rgba(74, 78, 105, 0.25);
 }
 
 input:focus, select:focus, textarea:focus {
   border-color: var(--aqua);
-  box-shadow: 0 0 0 2px var(--aqua-light);
+  box-shadow: 2px 2px 0px var(--aqua);
 }
 
 /* App Container */
@@ -157,7 +157,7 @@ input:focus, select:focus, textarea:focus {
   z-index: 40;
   background: var(--slate-dark);
   border-bottom: 3px solid var(--slate-darker);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 0px var(--slate-darker);
 }
 
 .header-inner {
@@ -252,7 +252,7 @@ input:focus, select:focus, textarea:focus {
   font-size: 12px;
   color: var(--slate-dark);
   font-weight: 600;
-  box-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
+  box-shadow: 1.5px 1.5px 0px var(--slate-darker);
 }
 
 .stat-pill .stat-label {
@@ -1305,21 +1305,21 @@ input:focus, select:focus, textarea:focus {
   background: var(--slate-dark);
   color: #FFFFFF;
   border-color: var(--slate-darker);
-  box-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
+  box-shadow: 1.5px 1.5px 0px var(--slate-darker);
 }
 
 .status-pill.working.active {
   background: var(--coral);
   color: #FFFFFF;
   border-color: #d95346;
-  box-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
+  box-shadow: 1.5px 1.5px 0px #b83d31;
 }
 
 .status-pill.done.active {
   background: var(--aqua);
   color: #FFFFFF;
   border-color: var(--aqua-dark);
-  box-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
+  box-shadow: 1.5px 1.5px 0px var(--aqua-dark);
 }
 
 /* Edit / Delete Buttons */
