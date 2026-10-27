@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase, SYSTEMS_CONFIG, isConfigured, SUPABASE_PROJECT_ID } from './lib/supabase';
-import type { TaskItem, SystemInfo, StatusType, PriorityType, SystemStats } from './types';
+import type { TaskItem, SystemInfo, StatusType, PriorityType, SystemStats, OverallStats } from './types';
 import type { User } from '@supabase/supabase-js';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { ChecklistView } from './components/ChecklistView';
+import { DashboardView } from './components/DashboardView';
 import { TaskModal } from './components/TaskModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { LoginModal } from './components/LoginModal';
@@ -12,10 +13,19 @@ import { ToastContainer } from './components/Toast';
 import type { ToastMessage } from './components/Toast';
 import { KeyRound, ShieldAlert } from 'lucide-react';
 
+// Status normalizer to safely handle casing discrepancies between DB tables ('Done', 'Not Started', etc.)
+export const normalizeStatus = (raw: unknown): StatusType => {
+  if (!raw) return 'not started';
+  const s = String(raw).toLowerCase().trim();
+  if (s === 'done' || s === 'completed') return 'done';
+  if (s === 'working' || s === 'in progress' || s === 'in_progress') return 'working';
+  return 'not started';
+};
+
 export function App() {
   const [systems] = useState<SystemInfo[]>(SYSTEMS_CONFIG);
-  // Default to system 3 (Enemy)
-  const [activeSystemId, setActiveSystemId] = useState<number>(3);
+  // Default to Dashboard view
+  const [activeSystemId, setActiveSystemId] = useState<number | 'dashboard'>('dashboard');
   const [tasksBySystem, setTasksBySystem] = useState<Record<number, TaskItem[]>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -114,7 +124,7 @@ export function App() {
             feature: row.feature || 'Untitled Feature',
             description: row.description || '',
             priority: (row.priority as PriorityType) || 'Medium',
-            status: (row.status as StatusType) || 'not started',
+            status: normalizeStatus(row.status),
           }));
           results[sys.id] = cleanData;
         }
@@ -140,11 +150,17 @@ export function App() {
 
   // Active system object
   const activeSystem = useMemo(() => {
+    if (activeSystemId === 'dashboard') {
+      return systems[0];
+    }
     return systems.find((s) => s.id === activeSystemId) || systems[0];
   }, [systems, activeSystemId]);
 
   // Active system tasks
   const activeTasks = useMemo(() => {
+    if (activeSystemId === 'dashboard') {
+      return [];
+    }
     return tasksBySystem[activeSystemId] || [];
   }, [tasksBySystem, activeSystemId]);
 
@@ -173,7 +189,7 @@ export function App() {
   }, [systems, tasksBySystem]);
 
   // Overall workspace stats across all systems
-  const overallStats = useMemo(() => {
+  const overallStats: OverallStats = useMemo(() => {
     let totalTasks = 0;
     let totalDone = 0;
     let totalWorking = 0;
@@ -198,13 +214,21 @@ export function App() {
   }, [statsMap]);
 
   // Update status (mark as done, working, not started)
-  const handleUpdateStatus = async (taskId: number, newStatus: StatusType) => {
+  const handleUpdateStatus = async (
+    taskId: number,
+    newStatus: StatusType,
+    systemIdOverride?: number
+  ) => {
     if (!configured) {
       addToast('Please configure Supabase credentials in src/lib/supabase.ts first', 'error');
       return;
     }
 
-    const currentTasks = tasksBySystem[activeSystemId] || [];
+    const targetSysId =
+      systemIdOverride ?? (typeof activeSystemId === 'number' ? activeSystemId : 1);
+    const targetSystem = systems.find((s) => s.id === targetSysId) || activeSystem;
+
+    const currentTasks = tasksBySystem[targetSysId] || [];
     const targetTask = currentTasks.find((t) => t.id === taskId);
     if (!targetTask) return;
 
@@ -213,14 +237,14 @@ export function App() {
     // Optimistic UI update
     setTasksBySystem((prev) => ({
       ...prev,
-      [activeSystemId]: (prev[activeSystemId] || []).map((t) =>
+      [targetSysId]: (prev[targetSysId] || []).map((t) =>
         t.id === taskId ? { ...t, status: newStatus } : t
       ),
     }));
 
     try {
       const { error } = await supabase
-        .from(activeSystem.tableName)
+        .from(targetSystem.tableName)
         .update({ status: newStatus })
         .eq('id', taskId);
 
@@ -233,7 +257,7 @@ export function App() {
       // Revert optimistic update
       setTasksBySystem((prev) => ({
         ...prev,
-        [activeSystemId]: (prev[activeSystemId] || []).map((t) =>
+        [targetSysId]: (prev[targetSysId] || []).map((t) =>
           t.id === taskId ? { ...t, status: previousStatus } : t
         ),
       }));
@@ -293,14 +317,16 @@ export function App() {
         status: inserted.status,
       };
 
+      const targetSysId = activeSystem.id;
       setTasksBySystem((prev) => ({
         ...prev,
-        [activeSystemId]: [...(prev[activeSystemId] || []), newTask],
+        [targetSysId]: [...(prev[targetSysId] || []), newTask],
       }));
 
       addToast(`Created "${newTask.feature}" in ${activeSystem.name}`, 'success');
     } else if (taskModalState.mode === 'edit' && taskModalState.task) {
       const taskId = taskModalState.task.id;
+      const targetSysId = activeSystem.id;
       const { data: updated, error } = await supabase
         .from(activeSystem.tableName)
         .update({
@@ -319,7 +345,7 @@ export function App() {
 
       setTasksBySystem((prev) => ({
         ...prev,
-        [activeSystemId]: (prev[activeSystemId] || []).map((t) =>
+        [targetSysId]: (prev[targetSysId] || []).map((t) =>
           t.id === taskId
             ? {
                 ...t,
@@ -340,6 +366,7 @@ export function App() {
   const handleDeleteTask = async () => {
     if (!deleteModalState.task || !configured) return;
     const taskToDelete = deleteModalState.task;
+    const targetSysId = activeSystem.id;
 
     try {
       const { error } = await supabase
@@ -353,7 +380,7 @@ export function App() {
 
       setTasksBySystem((prev) => ({
         ...prev,
-        [activeSystemId]: (prev[activeSystemId] || []).filter((t) => t.id !== taskToDelete.id),
+        [targetSysId]: (prev[targetSysId] || []).filter((t) => t.id !== taskToDelete.id),
       }));
 
       addToast(`Deleted "${taskToDelete.feature}"`, 'info');
@@ -418,41 +445,56 @@ export function App() {
 
       {/* Main Workspace Layout */}
       <main className="app-main">
-        {/* Left Sidebar: All child systems navigation */}
+        {/* Left Sidebar: Pinned Dashboard + All child systems navigation */}
         <Sidebar
           systems={systems}
           activeSystemId={activeSystemId}
           onSelectSystem={(id) => setActiveSystemId(id)}
           statsMap={statsMap}
+          overallStats={overallStats}
         />
 
-        {/* Right Main Content: Active System Checklist View */}
-        <ChecklistView
-          system={activeSystem}
-          tasks={activeTasks}
-          stats={
-            statsMap[activeSystemId] || {
-              total: 0,
-              done: 0,
-              working: 0,
-              notStarted: 0,
-              completionPercent: 0,
+        {/* Right Main Content: Switches between DashboardView and ChecklistView */}
+        {activeSystemId === 'dashboard' ? (
+          <DashboardView
+            systems={systems}
+            tasksBySystem={tasksBySystem}
+            statsMap={statsMap}
+            overallStats={overallStats}
+            isLoading={isLoading}
+            canEdit={Boolean(user)}
+            onSelectSystem={(id) => setActiveSystemId(id)}
+            onOpenLogin={() => setIsLoginModalOpen(true)}
+            onUpdateStatus={handleUpdateStatus}
+          />
+        ) : (
+          <ChecklistView
+            system={activeSystem}
+            tasks={activeTasks}
+            stats={
+              statsMap[activeSystemId] || {
+                total: 0,
+                done: 0,
+                working: 0,
+                notStarted: 0,
+                completionPercent: 0,
+              }
             }
-          }
-          isLoading={isLoading}
-          canEdit={Boolean(user)}
-          onOpenLogin={() => setIsLoginModalOpen(true)}
-          onUpdateStatus={handleUpdateStatus}
-          onOpenCreateModal={() =>
-            setTaskModalState({ isOpen: true, mode: 'create', task: null })
-          }
-          onOpenEditModal={(task) =>
-            setTaskModalState({ isOpen: true, mode: 'edit', task })
-          }
-          onOpenDeleteModal={(task) =>
-            setDeleteModalState({ isOpen: true, task })
-          }
-        />
+            isLoading={isLoading}
+            canEdit={Boolean(user)}
+            onOpenLogin={() => setIsLoginModalOpen(true)}
+            onUpdateStatus={handleUpdateStatus}
+            onOpenCreateModal={() =>
+              setTaskModalState({ isOpen: true, mode: 'create', task: null })
+            }
+            onOpenEditModal={(task) =>
+              setTaskModalState({ isOpen: true, mode: 'edit', task })
+            }
+            onOpenDeleteModal={(task) =>
+              setDeleteModalState({ isOpen: true, task })
+            }
+          />
+        )}
       </main>
 
       {/* Modals */}

@@ -7,7 +7,6 @@ import {
   CircleDashed,
   Plus,
   Search,
-  SlidersHorizontal,
   Edit3,
   Trash2,
   Sparkles,
@@ -17,6 +16,10 @@ import {
   Filter,
   Lock,
   ShieldCheck,
+  GripVertical,
+  ArrowRight,
+  ArrowLeft,
+  RotateCcw,
 } from 'lucide-react';
 
 interface ChecklistViewProps {
@@ -45,18 +48,16 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
   onOpenDeleteModal,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | StatusType>('all');
   const [priorityFilter, setPriorityFilter] = useState<'all' | PriorityType>('all');
-  const [sortBy, setSortBy] = useState<'id' | 'priority' | 'feature' | 'status'>('id');
+  const [sortBy, setSortBy] = useState<'id' | 'priority' | 'feature'>('id');
 
-  // Filter & sort logic
-  const filteredTasks = useMemo(() => {
+  // Drag and Drop state
+  const [draggedTaskId, setDraggedTaskId] = useState<number | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<StatusType | null>(null);
+
+  // Filter tasks based on search and priority
+  const processedTasks = useMemo(() => {
     let result = [...tasks];
-
-    // Status filter
-    if (statusFilter !== 'all') {
-      result = result.filter((t) => t.status === statusFilter);
-    }
 
     // Priority filter
     if (priorityFilter !== 'all') {
@@ -85,28 +86,216 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
         const order: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
         return (order[b.priority] || 0) - (order[a.priority] || 0);
       }
-      if (sortBy === 'status') {
-        const order: Record<string, number> = { done: 3, working: 2, 'not started': 1 };
-        return (order[b.status] || 0) - (order[a.status] || 0);
-      }
       return 0;
     });
 
     return result;
-  }, [tasks, statusFilter, priorityFilter, searchQuery, sortBy]);
+  }, [tasks, priorityFilter, searchQuery, sortBy]);
 
-  // Cycle status on checkbox click
-  const handleCycleStatus = (task: TaskItem) => {
+  // Group tasks into the 3 panels (case-insensitive for resilience)
+  const notStartedTasks = useMemo(
+    () => processedTasks.filter((t) => {
+      const s = t.status?.toLowerCase().trim();
+      return s === 'not started' || (!s || (s !== 'working' && s !== 'done' && s !== 'completed'));
+    }),
+    [processedTasks]
+  );
+  const workingTasks = useMemo(
+    () => processedTasks.filter((t) => {
+      const s = t.status?.toLowerCase().trim();
+      return s === 'working' || s === 'in progress' || s === 'in_progress';
+    }),
+    [processedTasks]
+  );
+  const doneTasks = useMemo(
+    () => processedTasks.filter((t) => {
+      const s = t.status?.toLowerCase().trim();
+      return s === 'done' || s === 'completed';
+    }),
+    [processedTasks]
+  );
+
+  // Drag handlers
+  const handleDragStart = (e: React.DragEvent, task: TaskItem) => {
+    if (!canEdit) {
+      e.preventDefault();
+      onOpenLogin();
+      return;
+    }
+    setDraggedTaskId(task.id);
+    e.dataTransfer.setData('text/plain', String(task.id));
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnd = () => {
+    setDraggedTaskId(null);
+    setDragOverColumn(null);
+  };
+
+  const handleDragOver = (e: React.DragEvent, columnStatus: StatusType) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = canEdit ? 'move' : 'none';
+    if (dragOverColumn !== columnStatus) {
+      setDragOverColumn(columnStatus);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent, columnStatus: StatusType) => {
+    // Only clear if leaving the drop container itself
+    const relatedTarget = e.relatedTarget as Node | null;
+    if (relatedTarget && (e.currentTarget as Node).contains(relatedTarget)) {
+      return;
+    }
+    if (dragOverColumn === columnStatus) {
+      setDragOverColumn(null);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent, targetStatus: StatusType) => {
+    e.preventDefault();
+    setDragOverColumn(null);
+
     if (!canEdit) {
       onOpenLogin();
       return;
     }
-    let nextStatus: StatusType = 'working';
-    if (task.status === 'not started') nextStatus = 'working';
-    else if (task.status === 'working') nextStatus = 'done';
-    else if (task.status === 'done') nextStatus = 'not started';
 
-    onUpdateStatus(task.id, nextStatus);
+    const taskIdStr = e.dataTransfer.getData('text/plain');
+    const taskId = Number(taskIdStr) || draggedTaskId;
+
+    if (!taskId) return;
+
+    const task = tasks.find((t) => t.id === taskId);
+    if (task && task.status !== targetStatus) {
+      onUpdateStatus(task.id, targetStatus);
+    }
+    setDraggedTaskId(null);
+  };
+
+  // Quick Move helper for 1-click movement
+  const handleQuickMove = (task: TaskItem, newStatus: StatusType) => {
+    if (!canEdit) {
+      onOpenLogin();
+      return;
+    }
+    onUpdateStatus(task.id, newStatus);
+  };
+
+  // Render a single task card
+  const renderTaskCard = (task: TaskItem) => {
+    const isDragging = draggedTaskId === task.id;
+    const s = task.status?.toLowerCase().trim() || 'not started';
+    const isDone = s === 'done' || s === 'completed';
+    const isWorking = s === 'working' || s === 'in progress' || s === 'in_progress';
+    const isNotStarted = !isDone && !isWorking;
+    const statusClass = isDone ? 'done' : isWorking ? 'working' : 'not-started';
+
+    return (
+      <div
+        key={task.id}
+        draggable={canEdit}
+        onDragStart={(e) => handleDragStart(e, task)}
+        onDragEnd={handleDragEnd}
+        className={`kanban-card ${statusClass} ${isDragging ? 'is-dragging' : ''} ${
+          !canEdit ? 'is-readonly' : ''
+        }`}
+      >
+        {/* Card Header: Drag Grip, Priority, ID, and Action buttons */}
+        <div className="card-top-bar">
+          <div className="card-meta-left">
+            <span
+              className={`drag-handle ${canEdit ? 'can-drag' : 'locked'}`}
+              title={canEdit ? 'Drag to move between columns' : 'Sign in to drag and edit'}
+            >
+              <GripVertical size={14} />
+            </span>
+            <span className={`priority-tag ${task.priority.toLowerCase()}`}>
+              {task.priority}
+            </span>
+            <span className="task-id-tag">#{task.id}</span>
+          </div>
+
+          {canEdit && (
+            <div className="card-actions-quick">
+              <button
+                onClick={() => onOpenEditModal(task)}
+                className="card-action-btn edit"
+                title="Edit feature"
+                aria-label={`Edit ${task.feature}`}
+              >
+                <Edit3 size={14} />
+              </button>
+              <button
+                onClick={() => onOpenDeleteModal(task)}
+                className="card-action-btn delete"
+                title="Delete feature"
+                aria-label={`Delete ${task.feature}`}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Card Body: Feature Name & Description */}
+        <div className="card-body">
+          <h4 className={`card-feature-title ${isDone ? 'is-done-text' : ''}`}>
+            {task.feature}
+          </h4>
+          {task.description && (
+            <p className={`card-description ${isDone ? 'is-done-desc' : ''}`}>
+              {task.description}
+            </p>
+          )}
+        </div>
+
+        {/* Card Footer: Quick Move Controls */}
+        <div className="card-footer-controls">
+          {isNotStarted && (
+            <button
+              onClick={() => handleQuickMove(task, 'working')}
+              className="quick-move-btn to-working"
+              title={canEdit ? 'Move to Working' : 'Sign in to update'}
+            >
+              <span>Start Working</span>
+              <ArrowRight size={13} />
+            </button>
+          )}
+
+          {isWorking && (
+            <div className="working-controls-row">
+              <button
+                onClick={() => handleQuickMove(task, 'not started')}
+                className="quick-move-btn to-notstarted"
+                title={canEdit ? 'Move back to Not Started' : 'Sign in to update'}
+              >
+                <ArrowLeft size={13} />
+                <span>Queue</span>
+              </button>
+              <button
+                onClick={() => handleQuickMove(task, 'done')}
+                className="quick-move-btn to-done"
+                title={canEdit ? 'Mark as Done' : 'Sign in to update'}
+              >
+                <span>Done</span>
+                <CheckCircle2 size={13} />
+              </button>
+            </div>
+          )}
+
+          {isDone && (
+            <button
+              onClick={() => handleQuickMove(task, 'working')}
+              className="quick-move-btn to-working-reopen"
+              title={canEdit ? 'Reopen into Working' : 'Sign in to update'}
+            >
+              <RotateCcw size={12} />
+              <span>Reopen</span>
+            </button>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -153,9 +342,9 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
               />
             </div>
             <div className="banner-mini-stats">
-              <span>{stats.done} completed</span>
+              <span>{stats.done} done</span>
               <span>•</span>
-              <span>{stats.working} in progress</span>
+              <span>{stats.working} working</span>
               <span>•</span>
               <span>{stats.notStarted} queued</span>
             </div>
@@ -206,39 +395,6 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
           )}
         </div>
 
-        {/* Status filter tabs */}
-        <div className="filter-tabs">
-          <button
-            onClick={() => setStatusFilter('all')}
-            className={`filter-tab-btn ${statusFilter === 'all' ? 'is-active' : ''}`}
-          >
-            All <span className="tab-count">{tasks.length}</span>
-          </button>
-          <button
-            onClick={() => setStatusFilter('done')}
-            className={`filter-tab-btn done ${statusFilter === 'done' ? 'is-active' : ''}`}
-          >
-            <CheckCircle2 size={13} />
-            Done <span className="tab-count">{stats.done}</span>
-          </button>
-          <button
-            onClick={() => setStatusFilter('working')}
-            className={`filter-tab-btn working ${statusFilter === 'working' ? 'is-active' : ''}`}
-          >
-            <Clock size={13} />
-            Working <span className="tab-count">{stats.working}</span>
-          </button>
-          <button
-            onClick={() => setStatusFilter('not started')}
-            className={`filter-tab-btn not-started ${
-              statusFilter === 'not started' ? 'is-active' : ''
-            }`}
-          >
-            <CircleDashed size={13} />
-            Not Started <span className="tab-count">{stats.notStarted}</span>
-          </button>
-        </div>
-
         {/* Priority and Sort selectors */}
         <div className="dropdowns-group">
           <div className="select-wrapper">
@@ -265,165 +421,160 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
               aria-label="Sort checklist"
             >
               <option value="id">Default (ID)</option>
-              <option value="priority">Priority (High to Low)</option>
-              <option value="status">Status (Done first)</option>
+              <option value="priority">Priority (High first)</option>
               <option value="feature">Name (A-Z)</option>
             </select>
           </div>
         </div>
+
+        {/* Drag and Drop instructions tag */}
+        <div className="dnd-hint-badge">
+          <GripVertical size={13} />
+          <span>Drag & Drop cards between panels to change status</span>
+        </div>
       </div>
 
-      {/* Checklist items list */}
+      {/* 3 SEPARATE PANELS: NOT STARTED, WORKING, DONE */}
       <div className="checklist-items-area">
         {isLoading ? (
           <div className="checklist-loading-state">
             <div className="spinner-large" />
             <p>Loading features for {system.name} from Supabase...</p>
           </div>
-        ) : filteredTasks.length === 0 ? (
+        ) : tasks.length === 0 ? (
           <div className="checklist-empty-state">
-            {tasks.length === 0 ? (
-              <>
-                <div className="empty-icon-wrap">
-                  <Sparkles size={32} />
-                </div>
-                <h3>No features in {system.name} system yet</h3>
-                <p>
-                  Start populating the checklist for table <code>{system.tableName}</code>.
-                </p>
-                {canEdit ? (
-                  <button onClick={onOpenCreateModal} className="btn-primary">
-                    <Plus size={16} />
-                    <span>Add First Feature</span>
-                  </button>
-                ) : (
-                  <button onClick={onOpenLogin} className="btn-secondary">
-                    <Lock size={15} />
-                    <span>Team Sign In to Add Features</span>
-                  </button>
-                )}
-              </>
+            <div className="empty-icon-wrap">
+              <Sparkles size={32} />
+            </div>
+            <h3>No features in {system.name} system yet</h3>
+            <p>Start populating the checklist for table <code>{system.tableName}</code>.</p>
+            {canEdit ? (
+              <button onClick={onOpenCreateModal} className="btn-primary">
+                <Plus size={16} />
+                <span>Add First Feature</span>
+              </button>
             ) : (
-              <>
-                <div className="empty-icon-wrap">
-                  <SlidersHorizontal size={28} />
-                </div>
-                <h3>No matching features</h3>
-                <p>No features match your current search and filter settings.</p>
-                <button
-                  onClick={() => {
-                    setSearchQuery('');
-                    setStatusFilter('all');
-                    setPriorityFilter('all');
-                  }}
-                  className="btn-secondary"
-                >
-                  Clear Filters
-                </button>
-              </>
+              <button onClick={onOpenLogin} className="btn-secondary">
+                <Lock size={15} />
+                <span>Team Sign In to Add Features</span>
+              </button>
             )}
           </div>
         ) : (
-          <div className="items-list">
-            {filteredTasks.map((task) => {
-              const isDone = task.status === 'done';
-              const isWorking = task.status === 'working';
-              const isNotStarted = task.status === 'not started';
-
-              return (
-                <div
-                  key={task.id}
-                  className={`task-row ${task.status} animate-fade-in`}
-                >
-                  {/* Left: Quick Cycle Status Button */}
-                  <button
-                    onClick={() => handleCycleStatus(task)}
-                    className={`status-cycle-btn ${task.status} ${!canEdit ? 'readonly' : ''}`}
-                    title={canEdit ? `Current: ${task.status}. Click to cycle status.` : `Current: ${task.status}. Sign in to edit.`}
-                    aria-label={`Cycle status for ${task.feature}`}
-                  >
-                    {isDone && <CheckCircle2 size={20} className="cycle-icon-done" />}
-                    {isWorking && <Clock size={20} className="cycle-icon-working" />}
-                    {isNotStarted && <CircleDashed size={20} className="cycle-icon-notstarted" />}
-                  </button>
-
-                  {/* Center: Details */}
-                  <div className="task-content">
-                    <div className="task-header-line">
-                      <h4 className={`task-feature-title ${isDone ? 'is-done-text' : ''}`}>
-                        {task.feature}
-                      </h4>
-
-                      <div className="task-badges">
-                        <span className={`priority-tag ${task.priority.toLowerCase()}`}>
-                          {task.priority}
-                        </span>
-                        <span className="task-id-tag">#{task.id}</span>
-                      </div>
-                    </div>
-
-                    {task.description && (
-                      <p className={`task-description ${isDone ? 'is-done-desc' : ''}`}>
-                        {task.description}
-                      </p>
-                    )}
+          <div className="kanban-board">
+            {/* PANEL 1: NOT STARTED */}
+            <div
+              className={`kanban-panel panel-not-started ${
+                dragOverColumn === 'not started' ? 'is-drag-over' : ''
+              }`}
+              onDragOver={(e) => handleDragOver(e, 'not started')}
+              onDragLeave={(e) => handleDragLeave(e, 'not started')}
+              onDrop={(e) => handleDrop(e, 'not started')}
+            >
+              {/* Panel Header */}
+              <div className="kanban-panel-header">
+                <div className="panel-header-title">
+                  <div className="panel-status-icon not-started">
+                    <CircleDashed size={16} />
                   </div>
-
-                  {/* Right: Direct 3-way status pills & Actions */}
-                  <div className="task-actions-group">
-                    {/* 1-click status switcher pills */}
-                    <div className="status-pill-group" role="group" aria-label="Set task status">
-                      <button
-                        onClick={() => canEdit ? onUpdateStatus(task.id, 'not started') : onOpenLogin()}
-                        className={`status-pill not-started ${isNotStarted ? 'active' : ''} ${!canEdit ? 'readonly' : ''}`}
-                        title={canEdit ? "Mark as Not Started" : "Sign in to update status"}
-                      >
-                        <CircleDashed size={12} />
-                        <span>Not Started</span>
-                      </button>
-                      <button
-                        onClick={() => canEdit ? onUpdateStatus(task.id, 'working') : onOpenLogin()}
-                        className={`status-pill working ${isWorking ? 'active' : ''} ${!canEdit ? 'readonly' : ''}`}
-                        title={canEdit ? "Mark as Working / In Progress" : "Sign in to update status"}
-                      >
-                        <Clock size={12} />
-                        <span>Working</span>
-                      </button>
-                      <button
-                        onClick={() => canEdit ? onUpdateStatus(task.id, 'done') : onOpenLogin()}
-                        className={`status-pill done ${isDone ? 'active' : ''} ${!canEdit ? 'readonly' : ''}`}
-                        title={canEdit ? "Mark as Done" : "Sign in to update status"}
-                      >
-                        <CheckCircle2 size={12} />
-                        <span>Done</span>
-                      </button>
-                    </div>
-
-                    {/* Edit and Delete action buttons (only rendered when logged in) */}
-                    {canEdit && (
-                      <div className="edit-delete-group animate-fade-in">
-                        <button
-                          onClick={() => onOpenEditModal(task)}
-                          className="action-icon-btn edit-btn"
-                          title="Edit feature"
-                          aria-label="Edit feature"
-                        >
-                          <Edit3 size={16} />
-                        </button>
-                        <button
-                          onClick={() => onOpenDeleteModal(task)}
-                          className="action-icon-btn delete-btn"
-                          title="Delete feature"
-                          aria-label="Delete feature"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <h3>NOT STARTED</h3>
                 </div>
-              );
-            })}
+                <div className="panel-header-count">
+                  <span>{notStartedTasks.length}</span>
+                </div>
+              </div>
+
+              {/* Drop Target & Card List */}
+              <div className="kanban-panel-content">
+                {notStartedTasks.length === 0 ? (
+                  <div className="panel-empty-dropzone">
+                    <CircleDashed size={24} className="empty-zone-icon" />
+                    <p className="empty-zone-text">No queued tasks</p>
+                    <span className="empty-zone-sub">Drop cards here to queue</span>
+                  </div>
+                ) : (
+                  <div className="cards-stack">
+                    {notStartedTasks.map((t) => renderTaskCard(t))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* PANEL 2: WORKING */}
+            <div
+              className={`kanban-panel panel-working ${
+                dragOverColumn === 'working' ? 'is-drag-over' : ''
+              }`}
+              onDragOver={(e) => handleDragOver(e, 'working')}
+              onDragLeave={(e) => handleDragLeave(e, 'working')}
+              onDrop={(e) => handleDrop(e, 'working')}
+            >
+              {/* Panel Header */}
+              <div className="kanban-panel-header">
+                <div className="panel-header-title">
+                  <div className="panel-status-icon working">
+                    <Clock size={16} />
+                  </div>
+                  <h3>WORKING</h3>
+                </div>
+                <div className="panel-header-count">
+                  <span>{workingTasks.length}</span>
+                </div>
+              </div>
+
+              {/* Drop Target & Card List */}
+              <div className="kanban-panel-content">
+                {workingTasks.length === 0 ? (
+                  <div className="panel-empty-dropzone">
+                    <Clock size={24} className="empty-zone-icon" />
+                    <p className="empty-zone-text">No active tasks</p>
+                    <span className="empty-zone-sub">Drop cards here to start</span>
+                  </div>
+                ) : (
+                  <div className="cards-stack">
+                    {workingTasks.map((t) => renderTaskCard(t))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* PANEL 3: DONE */}
+            <div
+              className={`kanban-panel panel-done ${
+                dragOverColumn === 'done' ? 'is-drag-over' : ''
+              }`}
+              onDragOver={(e) => handleDragOver(e, 'done')}
+              onDragLeave={(e) => handleDragLeave(e, 'done')}
+              onDrop={(e) => handleDrop(e, 'done')}
+            >
+              {/* Panel Header */}
+              <div className="kanban-panel-header">
+                <div className="panel-header-title">
+                  <div className="panel-status-icon done">
+                    <CheckCircle2 size={16} />
+                  </div>
+                  <h3>DONE</h3>
+                </div>
+                <div className="panel-header-count">
+                  <span>{doneTasks.length}</span>
+                </div>
+              </div>
+
+              {/* Drop Target & Card List */}
+              <div className="kanban-panel-content">
+                {doneTasks.length === 0 ? (
+                  <div className="panel-empty-dropzone">
+                    <CheckCircle2 size={24} className="empty-zone-icon" />
+                    <p className="empty-zone-text">No completed tasks</p>
+                    <span className="empty-zone-sub">Drop cards here when finished</span>
+                  </div>
+                ) : (
+                  <div className="cards-stack">
+                    {doneTasks.map((t) => renderTaskCard(t))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

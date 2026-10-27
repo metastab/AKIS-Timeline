@@ -1,13 +1,20 @@
 import React from 'react';
-import type { SystemInfo, SystemStats } from '../types';
+import type { SystemInfo, SystemStats, OverallStats } from '../types';
 import { SystemIcon } from './SystemIcon';
-import { ChevronRight, CheckCircle2, ShieldCheck, ListOrdered } from 'lucide-react';
+import {
+  ChevronRight,
+  CheckCircle2,
+  ShieldCheck,
+  ListOrdered,
+  LayoutDashboard,
+} from 'lucide-react';
 
 interface SidebarProps {
   systems: SystemInfo[];
-  activeSystemId: number;
-  onSelectSystem: (id: number) => void;
+  activeSystemId: number | 'dashboard';
+  onSelectSystem: (id: number | 'dashboard') => void;
   statsMap: Record<number, SystemStats>;
+  overallStats: OverallStats;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -15,9 +22,70 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeSystemId,
   onSelectSystem,
   statsMap,
+  overallStats,
 }) => {
   return (
     <aside className="app-sidebar">
+      {/* 1. Dashboard Overview Card (Pinned Above Child Systems) */}
+      <div className="sidebar-dashboard-section">
+        <button
+          onClick={() => onSelectSystem('dashboard')}
+          className={`system-nav-card dashboard-nav-card ${
+            activeSystemId === 'dashboard' ? 'is-active' : ''
+          }`}
+          aria-label="Open Overall Project Dashboard"
+        >
+          <div className="card-top-row">
+            <div className="system-icon-wrapper dashboard-icon-wrapper">
+              <LayoutDashboard size={20} className="system-icon" />
+            </div>
+            <div className="system-identity">
+              <div className="system-name-row">
+                <span className="system-name">Dashboard</span>
+                <span className="pulse-indicator-dot" title="Live System Telemetry" />
+              </div>
+              <span className="table-badge">Overall Statistics</span>
+            </div>
+            <ChevronRight
+              size={16}
+              className={`chevron-icon ${activeSystemId === 'dashboard' ? 'is-rotated' : ''}`}
+            />
+          </div>
+
+          {/* Progress overview */}
+          <div className="card-progress-section">
+            <div className="progress-labels">
+              <span className="task-count-text">
+                {overallStats.totalTasks === 0
+                  ? 'No features loaded'
+                  : `${overallStats.totalDone} / ${overallStats.totalTasks} done`}
+              </span>
+              <span className="percentage-text">{overallStats.overallPercent}%</span>
+            </div>
+            <div className="system-progress-track">
+              <div
+                className="system-progress-fill dashboard-fill"
+                style={{ width: `${overallStats.overallPercent}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Sub-counts pills */}
+          <div className="card-status-counts">
+            <span className="mini-status done" title={`${overallStats.totalDone} completed`}>
+              <CheckCircle2 size={11} /> {overallStats.totalDone}
+            </span>
+            <span className="mini-status working" title={`${overallStats.totalWorking} in progress`}>
+              ● {overallStats.totalWorking}
+            </span>
+            <span className="mini-status not-started" title={`${overallStats.totalNotStarted} queued`}>
+              ○ {overallStats.totalNotStarted}
+            </span>
+          </div>
+        </button>
+      </div>
+
+      {/* 2. Child Systems Header */}
       <div className="sidebar-header">
         <div className="sidebar-title-row">
           <ListOrdered size={18} className="sidebar-header-icon" />

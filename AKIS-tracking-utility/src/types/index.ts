@@ -26,3 +26,11 @@ export interface SystemStats {
   notStarted: number;
   completionPercent: number;
 }
+
+export interface OverallStats {
+  totalTasks: number;
+  totalDone: number;
+  totalWorking: number;
+  totalNotStarted: number;
+  overallPercent: number;
+}
